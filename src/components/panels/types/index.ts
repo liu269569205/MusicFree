@@ -19,6 +19,7 @@ import TimingClose from "./timingClose";
 import ImageViewer from "./imageViewer";
 import MusicComment from "./musicComment";
 import MusicItemLyricOptions from "./musicItemLyricOptions";
+import DownloadFiles from "./downloadFiles";
 
 export default {
     /** 加入歌单 */
@@ -63,4 +64,6 @@ export default {
     MusicItemLyricOptions,
     /** 换源 */
     SwitchSource,
+    /** 某首歌匹配到的下载文件（试听/删除） */
+    DownloadFiles,
 };

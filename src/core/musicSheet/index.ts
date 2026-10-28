@@ -9,7 +9,7 @@ import EventEmitter from "eventemitter3";
 import { Immer } from "immer";
 import { atom, getDefaultStore, useAtomValue } from "jotai";
 import { nanoid } from "nanoid";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import migrate, { migrateV2 } from "./migrate.ts";
 import SortedMusicList from "./sortedMusicList.ts";
 import storage from "./storage.ts";
@@ -584,36 +584,67 @@ function useSheetsBase() {
     return useAtomValue(musicSheetsBaseAtom);
 }
 
-// sheetId should not change
+/**
+ * 支持 sheetId 变化时刷新（横屏分屏切换歌单不再依赖组件 remount，避免整树重建卡顿）
+ */
 function useSheetItem(sheetId: string) {
     const sheetsBase = useAtomValue(musicSheetsBaseAtom);
+    // 用 ref 保存最新 sheetId，供事件回调读取，避免闭包捕获旧值
+    const sheetIdRef = useRef(sheetId);
+    sheetIdRef.current = sheetId;
 
-    const [sheetItem, setSheetItem] = useState<IMusic.IMusicSheetItem>({
-        ...(sheetsBase.find(it => it.id === sheetId) ||
-            ({} as IMusic.IMusicSheetItemBase)),
-        musicList: musicListMap.get(sheetId)?.musicList || [],
-    });
+    const getSheetItem = useCallback(() => {
+        const id = sheetIdRef.current;
+        return {
+            ...(sheetsBase.find(it => it.id === id) ||
+                ({} as IMusic.IMusicSheetItemBase)),
+            musicList: musicListMap.get(id)?.musicList || [],
+        };
+    }, [sheetsBase]);
+
+    const [sheetItem, setSheetItem] =
+        useState<IMusic.IMusicSheetItem>(getSheetItem);
+
+    // 仅在 sheetId 真正变化时重新初始化；歌单基本信息仍由事件驱动更新，避免引用抖动
+    useEffect(() => {
+        setSheetItem(getSheetItem());
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sheetId]);
+
+    // 歌单基本信息（标题/封面等）随 sheetsBase 同步：
+    // 冷启动时首帧 sheetsBase 可能仍为空，需要在这里补上；只合并不含 musicList 的字段，
+    // 保留原有 musicList 引用，避免列表引用抖动导致滚动位置被重置
+    useEffect(() => {
+        setSheetItem(prev => {
+            const base = sheetsBase.find(it => it.id === sheetIdRef.current);
+            if (!base) {
+                return prev;
+            }
+            return { ...prev, ...base };
+        });
+    }, [sheetsBase]);
 
     useEffect(() => {
         const onUpdateMusicList = ({ sheetId: updatedSheetId }) => {
-            if (updatedSheetId !== sheetId) {
+            if (updatedSheetId !== sheetIdRef.current) {
                 return;
             }
             setSheetItem(prev => ({
                 ...prev,
-                musicList: musicListMap.get(sheetId)?.musicList || [],
+                musicList:
+                    musicListMap.get(sheetIdRef.current)?.musicList || [],
             }));
         };
 
         const onUpdateSheetBasic = ({ sheetId: updatedSheetId }) => {
-            if (updatedSheetId !== sheetId) {
+            if (updatedSheetId !== sheetIdRef.current) {
                 return;
             }
             setSheetItem(prev => ({
                 ...prev,
                 ...(getDefaultStore()
                     .get(musicSheetsBaseAtom)
-                    .find(it => it.id === sheetId) || {}),
+                    .find(it => it.id === sheetIdRef.current) || {}),
             }));
         };
         ee.on("UpdateMusicList", onUpdateMusicList);

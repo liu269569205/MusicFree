@@ -34,6 +34,12 @@ interface IPersistStatus {
     "app.pluginUpdateTime": number;
     /** 缓存的定时关闭自定义时间（分钟） */
     "app.scheduleCloseTime": number;
+    /** 横屏分屏：上次打开的歌单 id */
+    "app.lastSplitSheetId": string;
+    /** 横屏分屏：歌单面板是否显示在左侧 */
+    "app.splitPlaylistOnLeft": boolean;
+    /** 是否已完成元力订阅源首次种子安装 */
+    "app.yuanliDefaultSeeded": string;
     /** 歌词-是否启用翻译 */
     "lyric.showTranslation": boolean;
     /** 歌词-详情页字体大小 */

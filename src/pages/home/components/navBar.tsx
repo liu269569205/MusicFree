@@ -9,12 +9,17 @@ import Color from "color";
 import IconButton from "@/components/base/iconButton";
 import Icon from "@/components/base/icon.tsx";
 import { useI18N } from "@/core/i18n";
+import useOrientation from "@/hooks/useOrientation";
+import { useSplitContext } from "../splitContext";
 
 // todo icon: = musicFree(引入自定义字体 居中) search
 export default function NavBar() {
     const navigation = useNavigation<any>();
     const colors = useColors();
     const { t } = useI18N();
+    const orientation = useOrientation();
+    const splitCtx = useSplitContext();
+    const isLandscape = orientation === "horizontal";
 
     return (
         <View style={styles.appbar}>
@@ -53,6 +58,19 @@ export default function NavBar() {
                     {t("home.clickToSearch")}
                 </ThemeText>
             </Pressable>
+
+            {isLandscape ? (
+                <IconButton
+                    accessibilityLabel="左右对调"
+                    name="arrows-left-right"
+                    sizeType="normal"
+                    style={styles.swap}
+                    color={colors.text}
+                    onPress={() => {
+                        splitCtx.toggleSides();
+                    }}
+                />
+            ) : null}
         </View>
     );
 }
@@ -82,5 +100,8 @@ const styles = StyleSheet.create({
     },
     menu: {
         marginLeft: rpx(24),
+    },
+    swap: {
+        marginRight: rpx(24),
     },
 });

@@ -155,7 +155,10 @@ android {
 
     buildTypes {
         debug {
-            signingConfig signingConfigs.debug
+            // 调试阶段与正式包使用同一个 keystore：
+            // 这样 debug 包可以直接覆盖安装到已装好的 release 包上，App 数据（歌单/配置/插件）不会丢。
+            // 正式包仍然走 release 签名，两者签名一致，互装不冲突。
+            signingConfig signingConfigs.release
         }
         release {
             // Caution! In production, you need to generate your own keystore file.

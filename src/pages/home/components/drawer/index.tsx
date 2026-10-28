@@ -67,6 +67,13 @@ function HomeDrawer(props: any) {
                 navigateToSetting("backup");
             },
         },
+        {
+            icon: "musical-note",
+            title: t("sidebar.songBackupAndRestore"),
+            onPress: () => {
+                navigateToSetting("songBackup");
+            },
+        },
     ];
 
     if (Platform.OS === "android") {

@@ -63,6 +63,12 @@ export interface IAppConfigProperties {
     "webdav.username": string;
     "webdav.password": string;
 
+    // Song Backup WebDAV（独立于通用备份）
+    "songBackup.webdav.url": string;
+    "songBackup.webdav.username": string;
+    "songBackup.webdav.password": string;
+    "songBackup.webdav.path": string;
+
     // Debug（保持嵌套结构）
     "debug.errorLog": boolean;
     "debug.traceLog": boolean;

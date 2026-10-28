@@ -114,6 +114,12 @@ class AppConfig implements IAppConfig {
                 ["setting.webdav.url", "webdav.url"],
                 ["setting.webdav.username", "webdav.username"],
                 ["setting.webdav.password", "webdav.password"],
+
+                // Song Backup WebDAV（独立于通用备份）
+                ["setting.songBackup.webdav.url", "songBackup.webdav.url"],
+                ["setting.songBackup.webdav.username", "songBackup.webdav.username"],
+                ["setting.songBackup.webdav.password", "songBackup.webdav.password"],
+                ["setting.songBackup.webdav.path", "songBackup.webdav.path"],
             ];
 
             // 执行迁移

@@ -90,6 +90,9 @@ export default function SwitchSource(props: ISwitchSourceProps) {
         setLoading(true);
         setSearched(true);
         setResults([]);
+        // 先收键盘再搜：键盘弹起时面板只显示搜索框（列表整块被隐藏），
+        // 若不收起，用户会看到「搜索有结果但列表不显示」。
+        Keyboard.dismiss();
         try {
             const result = await plugin.methods.search(q, 1, "music");
             const data = (result?.data ?? []) as IMusic.IMusicItem[];
@@ -104,6 +107,9 @@ export default function SwitchSource(props: ISwitchSourceProps) {
             Toast.warn(`搜索失败：${e?.message ?? e}`);
         } finally {
             setLoading(false);
+            // 键盘弹起时面板会压缩到只显示搜索框（列表整块隐藏），
+            // 搜完必须收起键盘，否则用户看到「结果出来了但列表不显示」。
+            Keyboard.dismiss();
         }
     }
 

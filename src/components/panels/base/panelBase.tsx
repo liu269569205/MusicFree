@@ -9,6 +9,7 @@ import {
     NativeEventSubscription,
     Pressable,
     StyleSheet,
+    View,
 } from "react-native";
 import Animated, {
     Easing,
@@ -190,12 +191,33 @@ export default function (props: IPanelBaseProps) {
             </Pressable>
             {keyboardAvoidBehavior === "none" ? (
                 panelBody
-            ) : (
+            ) : keyboardAvoidBehavior === "height" ||
+              keyboardAvoidBehavior === "padding" ? (
                 <KeyboardAvoidingView
                     style={style.kbContainer}
-                    behavior={keyboardAvoidBehavior || "position"}>
+                    behavior={keyboardAvoidBehavior}>
                     {panelBody}
                 </KeyboardAvoidingView>
+            ) : (
+                /**
+                 * 默认模式（原 KeyboardAvoidingView 的 position 行为）：
+                 *
+                 * 不能用 KeyboardAvoidingView —— 它在 position 模式下会渲染「外层 + 内容层」
+                 * 两层都没有尺寸（因为唯一子视图是 position:absolute 的面板），面板其实是靠
+                 * 绝对定位从 0 尺寸容器里向上溢出到屏幕上的（实测 onLayout 报 y = -height）。
+                 * 这种结构下，面板内部 ScrollView/FlatList 的 native 滚动手势会完全失效：
+                 * 列表能正常绘制、能点击，但手指上下拖动毫无反应（onScrollBeginDrag 不触发），
+                 * 代码 scrollToOffset 却能滚 —— 「某首歌有多个下载文件」时才暴露。
+                 *
+                 * 这里改成单层绝对定位全屏容器 + pointerEvents="box-none"：
+                 * 容器有正确尺寸（面板 bottom:0 定位正确），且面板外区域的触摸会穿透到
+                 * 遮罩层，点击空白处仍能关闭面板。
+                 */
+                <View
+                    style={[style.kbContainer, style.kbLayer]}
+                    pointerEvents="box-none">
+                    {panelBody}
+                </View>
             )}
         </>
     );
@@ -227,4 +249,12 @@ const style = StyleSheet.create({
     kbContainer: {
         zIndex: 15010,
     },
+    kbLayer: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+    },
 });
+

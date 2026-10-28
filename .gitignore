@@ -88,3 +88,6 @@ scripts/
 .expo
 dist/
 web-build/
+# 个人定制版：构建产物与日志不入库
+apk/
+/readme-upstream.md.bak

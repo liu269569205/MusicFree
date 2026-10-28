@@ -4,6 +4,7 @@ import BackupSetting from "./backupSetting";
 import BasicSetting from "./basicSetting";
 import PluginSetting from "./pluginSetting";
 import ThemeSetting from "./themeSetting";
+import SongBackupSetting from "./songBackupSetting";
 
 const settingTypes: Record<
     string,
@@ -34,6 +35,11 @@ const settingTypes: Record<
         title: "备份与恢复",
         i18nKey: "sidebar.backupAndResume",
         component: BackupSetting,
+    },
+    songBackup: {
+        title: "歌曲备份与恢复",
+        i18nKey: "sidebar.songBackupAndRestore",
+        component: SongBackupSetting,
     },
     about: {
         title: `关于${deviceInfoModule.getApplicationName()}`,

@@ -26,6 +26,7 @@ import i18n from "@/core/i18n";
 import bootstrapAtom from "./bootstrap.atom";
 import { getDefaultStore } from "jotai";
 import telemetry from "@/core/telemetry";
+import axios from "axios";
 
 
 // 依赖管理
@@ -254,6 +255,54 @@ async function extraMakeup() {
             }
         }
     } catch { }
+
+    // 默认预置 yuanli 订阅源（首次启动自动安装）
+    try {
+        const YUANLI_SUB_URL = "https://13413.kstore.vip/yuanli/yuanli.json";
+        // 1. 写入订阅列表，便于在「订阅设置」中查看/更新
+        try {
+            const raw = Config.getConfig("plugin.subscribeUrl") || "";
+            let subs: Array<{ name?: string; url: string }> = [];
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) subs = parsed;
+            }
+            if (!subs.some((s) => s.url === YUANLI_SUB_URL)) {
+                subs.push({ name: "yuanli", url: YUANLI_SUB_URL });
+                Config.setConfig("plugin.subscribeUrl", JSON.stringify(subs));
+            }
+        } catch {}
+
+        // 2. 仅首次启动自动安装订阅里的插件，避免每次启动联网
+        if (!PersistStatus.get("app.yuanliDefaultSeeded")) {
+            let data: any = null;
+            try {
+                const resp = await axios.get(YUANLI_SUB_URL, {
+                    headers: { "Cache-Control": "no-cache" },
+                });
+                data = resp.data;
+                if (typeof data === "string") {
+                    try {
+                        data = JSON.parse(data);
+                    } catch {}
+                }
+            } catch {}
+            const plugins = Array.isArray(data)
+                ? data
+                : (data && data.plugins) || [];
+            if (Array.isArray(plugins)) {
+                for (let i = 0; i < plugins.length; ++i) {
+                    const url = plugins[i]?.url;
+                    if (url) {
+                        await PluginManager.installPluginFromUrl(url).catch(
+                            emptyFunction,
+                        );
+                    }
+                }
+            }
+            PersistStatus.set("app.yuanliDefaultSeeded", "1");
+        }
+    } catch {}
 
     async function handleLinkingUrl(url: string) {
         // 插件

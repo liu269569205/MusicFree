@@ -283,6 +283,25 @@ export interface ILanguageData {
     "backupAndResume.resumeMode.append": string; // 附加
     "backupAndResume.resumeMode.overwrite-default": string; // 覆盖（默认）
     "backupAndResume.resumeMode.overwrite": string; // 覆盖
+    "sidebar.songBackupAndRestore": string; // 歌曲备份与恢复
+    "songBackup.webdavSettings": string; // Webdav设置
+    "songBackup.webdavUrl": string; // webdav服务地址
+    "songBackup.webdavPath": string; // 远程目录
+    "songBackup.backupToWebdav": string; // 备份歌曲到Webdav
+    "songBackup.resumeFromWebdav": string; // 从Webdav恢复
+    "songBackup.backuping": string; // 正在备份歌曲
+    "songBackup.resuming": string; // 正在恢复歌曲
+    "songBackup.backupSuccess": string; // 歌曲备份完成
+    "songBackup.resumeSuccess": string; // 歌曲恢复完成
+    "songBackup.webdavNotConfigured": string; // 请先配置Webdav
+    "songBackup.noLocalSongs": string; // 没有已下载歌曲
+    "songBackup.remoteDirEmpty": string; // Webdav无可恢复歌曲
+    "songBackup.uploaded": string; // 已上传
+    "songBackup.downloaded": string; // 已下载
+    "songBackup.skipped": string; // 已跳过(去重)
+    "songBackup.failed": string; // 失败
+    "songBackup.transferred": string; // 已传输
+    "songBackup.cancelled": string; // 已取消
 
     // 基本设置相关
     "basicSettings.common": string; // 通用

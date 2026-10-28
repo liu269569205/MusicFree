@@ -10,9 +10,10 @@ import rpx from "@/utils/rpx";
 import React from "react";
 import { StyleSheet, View } from "react-native";
 
-export default function Header() {
-    const { id = "favorite" } = useParams<"local-sheet-detail">();
-    const sheet = useSheetItem(id);
+export default function Header({ sheetId: overrideId }: { sheetId?: string }) {
+    // 分屏场景下不在路由内，useParams 可能为 undefined，需要兜底
+    const paramId = useParams<"local-sheet-detail">()?.id ?? "favorite";
+    const sheet = useSheetItem(overrideId ?? paramId);
     const colors = useColors();
     const { t } = useI18N();
 

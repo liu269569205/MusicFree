@@ -10,6 +10,8 @@ import i18n, { useI18N } from "@/core/i18n";
 import MusicSheet, { useSheetsBase, useStarredSheets } from "@/core/musicSheet";
 import { ROUTE_PATH, useNavigate } from "@/core/router";
 import useColors from "@/hooks/useColors";
+import useOrientation from "@/hooks/useOrientation";
+import { useSplitContext } from "../../splitContext";
 import rpx from "@/utils/rpx";
 import Toast from "@/utils/toast";
 import { FlashList } from "@shopify/flash-list";
@@ -21,6 +23,8 @@ export default function Sheets() {
     const [index, setIndex] = useState(0);
     const colors = useColors();
     const navigate = useNavigate();
+    const splitCtx = useSplitContext();
+    const orientation = useOrientation();
 
     const allSheets = useSheetsBase();
     const staredSheets = useStarredSheets();
@@ -145,9 +149,15 @@ export default function Sheets() {
                             withHorizontalPadding
                             onPress={() => {
                                 if (isLocalSheet) {
-                                    navigate(ROUTE_PATH.LOCAL_SHEET_DETAIL, {
-                                        id: sheet.id,
-                                    });
+                                    if (orientation === "horizontal") {
+                                        // 横屏：在分屏面板中打开，首页保持不变
+                                        splitCtx.openLocalSheet(sheet.id);
+                                    } else {
+                                        navigate(
+                                            ROUTE_PATH.LOCAL_SHEET_DETAIL,
+                                            { id: sheet.id },
+                                        );
+                                    }
                                 } else {
                                     navigate(ROUTE_PATH.PLUGIN_SHEET_DETAIL, {
                                         sheetInfo: sheet,
