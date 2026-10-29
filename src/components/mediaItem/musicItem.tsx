@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { StyleProp, StyleSheet, TouchableOpacity, View, ViewStyle } from "react-native";
 import rpx from "@/utils/rpx";
+import { musicListItemHeight } from "@/constants/uiConst";
 import ListItem from "../base/listItem";
 
 import LocalMusicSheet from "@/core/localMusicSheet";
@@ -255,8 +256,9 @@ export default function MusicItem(props: IMusicItemProps) {
 
 const styles = StyleSheet.create({
     // 歌曲行比 ListItem 的 big(120) 更紧凑，列表行间距更小
+    // 高度必须用共享常量：musicList 的滚动定位按时高 × 索引计算偏移
     compactRow: {
-        height: rpx(104),
+        height: musicListItemHeight,
     },
     icon: {
         marginRight: rpx(6),

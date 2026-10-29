@@ -14,7 +14,7 @@ import ListFooter from "../base/listFooter";
 import MusicItem from "../mediaItem/musicItem";
 import { isSameMediaItem } from "@/utils/mediaUtils";
 import Icon from "../base/icon";
-import { iconSizeConst } from "@/constants/uiConst";
+import { iconSizeConst, musicListItemHeight } from "@/constants/uiConst";
 import useColors from "@/hooks/useColors";
 
 interface IMusicListProps {
@@ -44,7 +44,12 @@ interface IMusicListProps {
     onRetry?: () => void;
     onLoadMore?: () => void;
 }
-const ITEM_HEIGHT = rpx(120);
+/**
+ * 单行高度：必须和 mediaItem/musicItem 的 compactRow 一致。
+ * 定位偏移是「时高 × 索引」算出来的，不一致会让索引大的行偏得离谱
+ * （点定位按钮跑偏、点歌时误判不在屏幕内而自动滚动）。
+ */
+const ITEM_HEIGHT = musicListItemHeight;
 
 /** 音乐列表 */
 export default function MusicList(props: IMusicListProps) {
@@ -80,6 +85,13 @@ export default function MusicList(props: IMusicListProps) {
     const isDraggingRef = useRef(false);
     /** 当前滚动偏移（用于判断目标项是否已在屏幕内） */
     const scrollOffsetRef = useRef(0);
+    /**
+     * 用户主动点了列表里的某一行时，在此时刻之前不要自动跟随滚动。
+     * 点歌本身就是「我看到它、我点它」，列表再自己动一下会让人点错下一首。
+     * 用时间窗而不是布尔标记：同一首歌重复点击不会产生高亮变化，
+     * 布尔标记会残留下来，把下一次真正的切歌跟随吃掉。
+     */
+    const suppressFollowUntilRef = useRef(0);
 
     // 查找高亮项的索引
     const highlightIndex = React.useMemo(() => {
@@ -110,8 +122,13 @@ export default function MusicList(props: IMusicListProps) {
         }, 5000);
     }, []);    
     
-    // 把某一项滚到列表中部：用 scrollToOffset 直接算偏移（O(1)），
-    // scrollToIndex 在大歌单里会渲染中间项导致卡顿。
+    // 把某一项滚到列表正中
+    //
+    // 分两步，兼顾「不卡」和「真居中」：
+    // ① 目标在远处：按「行高 × 索引」估算偏移先跳过去（O(1)，不渲染中间项）
+    // ② 再让 FlashList 用 scrollToIndex + viewPosition 0.5 按它自己的真实布局
+    //    对齐 —— 估算行高有亚像素误差，几百行积累下来能偏出小半屏，
+    //    这一步才是像素级的正中。
     const scrollIndexToCenter = useCallback(
         (index: number, animated: boolean) => {
             const list = flashListRef.current;
@@ -120,25 +137,48 @@ export default function MusicList(props: IMusicListProps) {
             }
             const viewport = listHeightRef.current;
             const offsetInList = headerHeightRef.current + index * ITEM_HEIGHT;
-            try {
-                list.scrollToOffset({
-                    offset: Math.max(
-                        0,
-                        offsetInList - Math.max(0, (viewport - ITEM_HEIGHT) / 2),
-                    ),
-                    animated,
-                });
-            } catch (e) {
-                // 列表尚未完成布局，忽略
+            const targetOffset = Math.max(
+                0,
+                offsetInList - Math.max(0, (viewport - ITEM_HEIGHT) / 2),
+            );
+            const distance = Math.abs(targetOffset - scrollOffsetRef.current);
+            // 目标就在附近（几屏内）：不用先瞬移，直接让列表平滑对齐到正中
+            const near = viewport > 0 && distance < viewport * 3;
+            if (!near) {
+                try {
+                    list.scrollToOffset({
+                        offset: targetOffset,
+                        animated: false,
+                    });
+                } catch (e) {
+                    // 列表尚未完成布局，忽略
+                    return;
+                }
             }
+            // 目标行渲染、布局写回后再做像素级居中
+            setTimeout(
+                () => {
+                    try {
+                        flashListRef.current?.scrollToIndex({
+                            index,
+                            viewPosition: 0.5,
+                            animated,
+                        });
+                    } catch (e) {
+                        // 拿不到布局时保持上面的估算位置
+                    }
+                },
+                near ? 0 : 120,
+            );
         },
         [],
     );
     
-    // 滚动到高亮项
+    // 滚动到高亮项（点「定位到正在播放」按钮）
     const scrollToHighlight = useCallback(() => {
         if (highlightIndex !== -1 && flashListRef.current) {
-            scrollIndexToCenter(highlightIndex, false);
+            // 带动画滚到正中，视觉上能看出「跳到了哪里」
+            scrollIndexToCenter(highlightIndex, true);
             // 立即隐藏角标
             setShowBadge(false);
             if (hideTimeoutRef.current) {
@@ -228,6 +268,10 @@ export default function MusicList(props: IMusicListProps) {
         if (isDraggingRef.current) {
             return;
         }
+        // 刚点过行（点歌 / 点了别的行）：不要跟着动，用户视线就在那一行
+        if (Date.now() < suppressFollowUntilRef.current) {
+            return;
+        }
         // 已完整显示在可视区内 → 不滚动，避免列表自己跳动
         const viewport = listHeightRef.current;
         const top =
@@ -313,6 +357,11 @@ export default function MusicList(props: IMusicListProps) {
                 extraData={highlightMusicItem}
                 data={musicList ?? []}
                 estimatedItemSize={ITEM_HEIGHT}
+                // 声明每行真实高度：让内部偏移计算 / 可视判断与真实布局一致，
+                // 避免长列表里「时高 × 索引」的估算误差累积
+                overrideItemLayout={layout => {
+                    layout.size = ITEM_HEIGHT;
+                }}
                 onScrollBeginDrag={handleScrollBegin}
                 onScrollEndDrag={handleScrollEnd}
                 onMomentumScrollEnd={handleScrollEnd}
@@ -326,6 +375,9 @@ export default function MusicList(props: IMusicListProps) {
                             musicItem={musicItem}
                             index={showIndex ? index + 1 : undefined}
                             onItemPress={() => {
+                                // 用户点的是「眼前这一行」，播放后列表不要自己滑动
+                                suppressFollowUntilRef.current =
+                                    Date.now() + 2000;
                                 if (onItemPress) {
                                     onItemPress(musicItem, musicList);
                                 } else {

@@ -32,6 +32,15 @@ const iconSizeConst = {
     large: rpx(72),
 };
 
+/**
+ * 歌曲列表单行高度。
+ * 必须与 mediaItem/musicItem 的 compactRow 高度严格一致：
+ * 列表定位（scrollToOffset）是按时高 × 索引算偏移的，
+ * 一旦行高和这里不一样，索引越大偏差越大 ——
+ * 表现为「点某首歌列表自己乱跳」「定位到正在播放跑偏」。
+ */
+const musicListItemHeight = rpx(104);
+
 type ColorKey = "normal" | "secondary" | "highlight" | "primary";
 const colorMap: Record<ColorKey, keyof CustomizedColors> = {
     normal: "text",
@@ -40,5 +49,11 @@ const colorMap: Record<ColorKey, keyof CustomizedColors> = {
     primary: "primary",
 } as const;
 
-export { fontSizeConst, fontWeightConst, iconSizeConst, colorMap };
+export {
+    fontSizeConst,
+    fontWeightConst,
+    iconSizeConst,
+    colorMap,
+    musicListItemHeight,
+};
 export type { ColorKey };
