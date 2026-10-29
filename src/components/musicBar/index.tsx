@@ -9,6 +9,7 @@ import useColors from "@/hooks/useColors";
 import IconButton from "../base/iconButton";
 import TrackPlayer, { useCurrentMusic, useMusicState, useProgress } from "@/core/trackPlayer";
 import { musicIsBuffering, musicIsPaused } from "@/utils/trackUtils";
+import useBufferingSpinner from "@/hooks/useBufferingSpinner";
 import MusicInfo from "./musicInfo";
 import Icon from "@/components/base/icon.tsx";
 
@@ -19,8 +20,10 @@ function CircularPlayBtn() {
 
     const isPaused = musicIsPaused(musicState);
     const isBuffering = musicIsBuffering(musicState);
+    // 缓冲中最多转 8 秒：卡住的音源不至于让播放键永远消失（转圈控件点不动）
+    const showSpinner = useBufferingSpinner(isBuffering);
 
-    if (isBuffering) {
+    if (showSpinner) {
         return <View style={styles.bufferingContainer}>
             <ActivityIndicator size={rpx(52)} color={colors.musicBarText} />
         </View>;

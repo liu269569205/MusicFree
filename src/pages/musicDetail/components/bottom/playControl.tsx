@@ -8,11 +8,14 @@ import TrackPlayer, { useMusicState, useRepeatMode } from "@/core/trackPlayer";
 import useOrientation from "@/hooks/useOrientation";
 import delay from "@/utils/delay";
 import { musicIsBuffering, musicIsPaused } from "@/utils/trackUtils";
+import useBufferingSpinner from "@/hooks/useBufferingSpinner";
 import { MusicRepeatModeInfo } from "@/constants/trackPlayerConst";
 
 export default function () {
     const repeatMode = useRepeatMode();
     const musicState = useMusicState();
+    // 缓冲中最多转 8 秒，避免音源卡住时播放键永远不可点
+    const showSpinner = useBufferingSpinner(musicIsBuffering(musicState));
 
     const orientation = useOrientation();
 
@@ -45,7 +48,7 @@ export default function () {
                     }}
                 />
                 {
-                    musicIsBuffering(musicState) ? (<View style={styles.indicatorContainer}>
+                    showSpinner ? (<View style={styles.indicatorContainer}>
                         <ActivityIndicator size={rpx(72)} color={"white"}/>
                     </View>) : (<Icon
                         color={"white"}
