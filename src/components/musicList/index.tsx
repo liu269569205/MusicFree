@@ -122,90 +122,78 @@ export default function MusicList(props: IMusicListProps) {
         }, 5000);
     }, []);    
     
-    // 把某一项滚到列表正中
-    //
-    // 两条路径：
-    // ① 目标已渲染（FlashList 能拿到它的真实布局）→ scrollToIndex + viewPosition 0.5，
-    //    由列表自己算偏移，像素级正中；
-    // ② 目标在远处（没渲染过，FlashList 的 scrollToIndex 直接静默返回，因为
-    //    getLayout 拿不到布局）→ 交给底层 RecyclerListView 的 scrollToIndex，
-    //    它按布局管理器里的累加尺寸算偏移，多远都能跳；跳完再精调一次居中。
-    const scrollIndexToCenter = useCallback(
-        (index: number, animated: boolean) => {
-            const list = flashListRef.current;
-            if (!list || index < 0) {
-                return;
-            }
-            const rlv = (list as any).recyclerlistview_unsafe as
-                | {
-                      getLayout?: (i: number) => { y: number } | undefined;
-                      scrollToIndex?: (i: number, animate?: boolean) => void;
-                  }
-                | undefined;
-            // ① 已渲染：直接按真实布局居中
-            if (rlv?.getLayout?.(index)) {
-                try {
-                    list.scrollToIndex({
-                        index,
-                        viewPosition: 0.5,
-                        animated,
-                    });
-                    return;
-                } catch (e) {
-                    // 落到下面的兜底逻辑
-                }
-            }
-            // ② 远处：先让 RLV 跳到该项（O(1) 不渲染中间项），再精调
-            if (rlv?.scrollToIndex) {
-                try {
-                    rlv.scrollToIndex(index, animated);
-                    setTimeout(
-                        () => {
-                            try {
-                                flashListRef.current?.scrollToIndex({
-                                    index,
-                                    viewPosition: 0.5,
-                                    animated: false,
-                                });
-                            } catch (e) {
-                                // 目标还没渲染出来时保持 RLV 算出的位置
-                            }
-                        },
-                        animated ? 320 : 200,
-                    );
-                    return;
-                } catch (e) {
-                    // 落到下面的兜底逻辑
-                }
-            }
-            // 兜底：按「行高 × 索引」估算
-            const viewport = listHeightRef.current;
-            const offsetInList = headerHeightRef.current + index * ITEM_HEIGHT;
-            const targetOffset = Math.max(
-                0,
-                offsetInList - Math.max(0, (viewport - ITEM_HEIGHT) / 2),
-            );
-            try {
-                list.scrollToOffset({ offset: targetOffset, animated: false });
-            } catch (e) {
-                // 列表尚未完成布局，忽略
-            }
-        },
-        [],
-    );
+    /**
+     * 跳到某一项（并让它落在列表中间）。
+     *
+     * 这里**不用滚动接口**，而是换 key 让 FlashList 重新挂载、用
+     * `initialScrollIndex` 由首帧布局直接摆好位置。
+     *
+     * 原因：任何「挂载之后再程序化滚动」（scrollToOffset / FlashList.scrollToIndex /
+     * 底层 RecyclerListView.scrollToIndex 都试过）之后，列表画面是对的，但 cell
+     * 的点击会全部失效，必须手指上下滑一下才恢复 —— 这是 native 层的滚动状态残留，
+     * JS 侧无法修补（试过 1px 偏移往返、removeClippedSubviews、重算命中区，都无效）。
+     * 而 `initialScrollIndex` 是挂在 ScrollView 首帧的初始 contentOffset 上，
+     * 不产生「滚动」这个动作，冷启动场景已验证点得动。
+     *
+     * 居中做法：initialScrollIndex 只能把目标行顶到视口顶部，所以把起始索引
+     * 往前挪「半屏的行数」，让目标行落在中间（误差不超过半行）。
+     */
+    const jumpKeyRef = useRef(0);
+    const [jumpState, setJumpState] = useState<{
+        index: number;
+        key: number;
+    }>({ index: -1, key: 0 });
+
+    /**
+     * 行高实测值。
+     *
+     * 常量 `ITEM_HEIGHT` 只是样式里声明的值，实际行高会比它高一截
+     * （ListItem 自带内边距 + 行间距），不同机型/方向都不一样。
+     * 「挪半屏该挪几行」如果按常量算，偏差会被放大成小半屏，
+     * 所以这里让第一行渲染后把真实高度量出来。
+     */
+    const rowHeightRef = useRef(ITEM_HEIGHT);
+
+    const jumpToIndex = useCallback((index: number) => {
+        if (index < 0) {
+            return;
+        }
+        const viewport = listHeightRef.current;
+        const rowHeight = rowHeightRef.current > 0 ? rowHeightRef.current : ITEM_HEIGHT;
+        const rowsAbove =
+            viewport > 0
+                ? Math.max(
+                      0,
+                      Math.round((viewport / 2 - rowHeight / 2) / rowHeight),
+                  )
+                : 0;
+        const start = Math.max(0, index - rowsAbove);
+        // FlashList 的 initialScrollIndex 会把表头高度重复折算一次
+        // （探针实测：传 322 时顶部实际落在 318，差的正好是 ListHeader 占的行数），
+        // 所以把表头行数补回去，目标行才会真正落到中间。
+        const headerRows =
+            rowHeight > 0
+                ? Math.round(headerHeightRef.current / rowHeight)
+                : 0;
+        const scrollIndex = Math.max(0, start + headerRows);
+        // 重挂载后 onScroll 要等首帧回调，先把偏移估一个值，
+        // 避免「切歌跟随」的可视判断拿到旧偏移再跳一次
+        scrollOffsetRef.current = start * rowHeight;
+        jumpKeyRef.current += 1;
+        setJumpState({ index: scrollIndex, key: jumpKeyRef.current });
+    }, []);
     
     // 滚动到高亮项（点「定位到正在播放」按钮）
     const scrollToHighlight = useCallback(() => {
-        if (highlightIndex !== -1 && flashListRef.current) {
-            // 带动画滚到正中，视觉上能看出「跳到了哪里」
-            scrollIndexToCenter(highlightIndex, true);
+        if (highlightIndex !== -1) {
+            jumpToIndex(highlightIndex);
             // 立即隐藏角标
             setShowBadge(false);
             if (hideTimeoutRef.current) {
                 clearTimeout(hideTimeoutRef.current);
             }
         }
-    }, [highlightIndex, scrollIndexToCenter]);    
+    }, [highlightIndex, jumpToIndex]);    
     
     // 清理定时器
     useEffect(() => {
@@ -253,16 +241,9 @@ export default function MusicList(props: IMusicListProps) {
         if (autoScrollToHighlight) {
             return;
         }
-        const list = flashListRef.current;
-        if (!list) {
-            return;
-        }
-        try {
-            list.scrollToOffset({ offset: 0, animated: false });
-        } catch (e) {
-            // 列表尚未完成布局，忽略
-        }
-    }, [musicSheet?.id, autoScrollToHighlight]);
+        // 用重挂载回到顶部（理由同 jumpToIndex：滚动接口会留下点不动的状态）
+        jumpToIndex(0);
+    }, [musicSheet?.id, autoScrollToHighlight, jumpToIndex]);
 
     // 切歌跟随：正在播放的歌曲变化时自动滑动到它（切歌 / 上一首 / 下一首 /
     // 随机播放跳转都会触发）。用户正在手动拖动列表时不打断；
@@ -289,20 +270,22 @@ export default function MusicList(props: IMusicListProps) {
         }
         // 已完整显示在可视区内 → 不滚动，避免列表自己跳动
         const viewport = listHeightRef.current;
+        const rowHeight =
+            rowHeightRef.current > 0 ? rowHeightRef.current : ITEM_HEIGHT;
         const top =
             headerHeightRef.current +
-            highlightIndex * ITEM_HEIGHT -
+            highlightIndex * rowHeight -
             scrollOffsetRef.current;
-        const bottom = top + ITEM_HEIGHT;
+        const bottom = top + rowHeight;
         if (viewport > 0 && top >= 0 && bottom <= viewport) {
             return;
         }
-        // 等这一帧渲染完再滚，保证新行已经布局、偏移算得准
+        // 等这一帧渲染完再跳，保证新行已经布局
         const timer = setTimeout(() => {
-            scrollIndexToCenter(highlightIndex, true);
+            jumpToIndex(highlightIndex);
         }, 120);
         return () => clearTimeout(timer);
-    }, [highlightIndex, followCurrent, scrollIndexToCenter]);
+    }, [highlightIndex, followCurrent, jumpToIndex]);
 
     // 外部触发回到第一条（如长按歌单标题）
     const prevScrollToTopSignalRef = useRef(scrollToTopSignal);
@@ -314,16 +297,8 @@ export default function MusicList(props: IMusicListProps) {
             return;
         }
         prevScrollToTopSignalRef.current = scrollToTopSignal;
-        const list = flashListRef.current;
-        if (!list) {
-            return;
-        }
-        try {
-            list.scrollToOffset({ offset: 0, animated: true });
-        } catch (e) {
-            // 列表尚未完成布局，忽略
-        }
-    }, [scrollToTopSignal]);
+        jumpToIndex(0);
+    }, [scrollToTopSignal, jumpToIndex]);
 
     return (
         <View
@@ -350,14 +325,22 @@ export default function MusicList(props: IMusicListProps) {
             listSize.height > 0 &&
             !waitForInitialPosition ? (
             <FlashList
-                // key 只取「宽度」：分屏/旋转导致宽度变化时才重新挂载
-                // （宽度为 0 时挂载会让 cell 的触摸命中区失效）。
-                // 高度变化（如键盘弹起）不能触发重挂，否则列表会被重置回顶部。
-                key={`w${Math.round(listSize.width)}`}
+                // key 取「宽度 + 跳转序号」：
+                // 宽度变化（分屏/旋转）必须重挂，宽度为 0 时挂载会让 cell 点不动；
+                // 跳转（定位按钮 / 切歌跟随 / 回顶部）也靠换 key 重挂，
+                // 由 initialScrollIndex 在首帧摆好位置，不走滚动接口。
+                key={`w${Math.round(listSize.width)}-j${jumpState.key}`}
                 ref={flashListRef}
                 estimatedListSize={listSize}
-                // 启动定位：交给首帧布局直接摆好，不做事后滚动
-                initialScrollIndex={initialIndexRef.current}
+                // 定位：交给首帧布局直接摆好，不做事后滚动
+                initialScrollIndex={
+                    jumpState.index >= 0
+                        ? Math.min(
+                              jumpState.index,
+                              Math.max(0, (musicList?.length ?? 1) - 1),
+                          )
+                        : initialIndexRef.current
+                }
                 // 关闭子视图裁剪：Android 上它会在程序化滚动 / 尺寸变化后
                 // 把 cell 从原生视图树里摘掉，表现为「列表看得见但点不动，
                 // 手指滑一下才恢复」。列表本身有虚拟化，不裁剪也不会多渲染。
@@ -395,25 +378,38 @@ export default function MusicList(props: IMusicListProps) {
                 scrollEventThrottle={32}
                 renderItem={({ index, item: musicItem }) => {
                     return (
-                        <MusicItem
-                            musicItem={musicItem}
-                            index={showIndex ? index + 1 : undefined}
-                            onItemPress={() => {
-                                // 用户点的是「眼前这一行」，播放后列表不要自己滑动
-                                suppressFollowUntilRef.current =
-                                    Date.now() + 2000;
-                                if (onItemPress) {
-                                    onItemPress(musicItem, musicList);
-                                } else {
-                                    TrackPlayer.playWithReplacePlayList(
-                                        musicItem,
-                                        musicList ?? [musicItem],
-                                    );
+                        // 包一层只为量出真实行高（定位居中要用），
+                        // 普通 View 不参与触摸响应，不影响行内点击
+                        <View
+                            onLayout={e => {
+                                const h = e.nativeEvent.layout.height;
+                                if (h > 0) {
+                                    rowHeightRef.current = h;
                                 }
-                            }}
-                            musicSheet={musicSheet}
-                            highlight={isSameMediaItem(musicItem, highlightMusicItem)}
-                        />
+                            }}>
+                            <MusicItem
+                                musicItem={musicItem}
+                                index={showIndex ? index + 1 : undefined}
+                                onItemPress={() => {
+                                    // 用户点的是「眼前这一行」，播放后列表不要自己滑动
+                                    suppressFollowUntilRef.current =
+                                        Date.now() + 2000;
+                                    if (onItemPress) {
+                                        onItemPress(musicItem, musicList);
+                                    } else {
+                                        TrackPlayer.playWithReplacePlayList(
+                                            musicItem,
+                                            musicList ?? [musicItem],
+                                        );
+                                    }
+                                }}
+                                musicSheet={musicSheet}
+                                highlight={isSameMediaItem(
+                                    musicItem,
+                                    highlightMusicItem,
+                                )}
+                            />
+                        </View>
                     );
                 }}
                 onEndReached={() => {
