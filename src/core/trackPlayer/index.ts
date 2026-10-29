@@ -168,6 +168,14 @@ class TrackPlayer extends EventEmitter<{
                     track.url = newSource?.url || track.url;
                     track.headers = newSource?.headers || track.headers;
 
+                    // 拿不到任何可用音源时不要把队列塞进播放器：
+                    // 塞进去却准备不出来，播放器会永久停在 Loading，
+                    // 表现就是「一启动播放栏一直转圈、点不动、也没声音」。
+                    // 留空队列，等用户点播放时再重新取源。
+                    if (!track.url) {
+                        return;
+                    }
+
                     if (isSameMediaItem(this.currentMusic, track)) {
                         await this.setTrackSource(track as Track, false);
                         if (progress) {
@@ -175,6 +183,9 @@ class TrackPlayer extends EventEmitter<{
                             this.seekTo(progress);
                         }
                     }
+                })
+                .catch(() => {
+                    /* 取源失败：保持空队列，用户点播放时会重新取 */
                 });
             this.setCurrentMusic(track);
 
@@ -457,9 +468,22 @@ class TrackPlayer extends EventEmitter<{
             if (this.isCurrentMusic(musicItem)) {
                 // 获取底层播放器中的track
                 const currentTrack = await ReactNativeTrackPlayer.getTrack(0);
+                const stateBeforePlay = (
+                    await ReactNativeTrackPlayer.getPlaybackState()
+                ).state;
+                /**
+                 * 播放器卡在 Loading/Buffering（准备中但迟迟出不来）时，
+                 * 不能信任队列里的 track —— 多半是上次会话 / 启动恢复留下的
+                 * 过期音源（元力这类链接有时效），ExoPlayer 会一直准备不出来。
+                 * 此时直接 play() 只会继续卡，必须往下走「重新取源」。
+                 */
+                const stuckInBuffer =
+                    stateBeforePlay === State.Loading ||
+                    stateBeforePlay === State.Buffering;
                 // 2.1 如果当前有源
                 if (
                     currentTrack?.url &&
+                    !stuckInBuffer &&
                     isSameMediaItem(
                         musicItem,
                         currentTrack as IMusic.IMusicItem,
