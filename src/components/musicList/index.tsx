@@ -51,6 +51,12 @@ interface IMusicListProps {
  */
 const ITEM_HEIGHT = musicListItemHeight;
 
+/** 一个列表实例：initialScrollIndex + 唯一 key（key 变即重新挂载） */
+interface IListInstance {
+    index: number;
+    key: number;
+}
+
 /** 音乐列表 */
 export default function MusicList(props: IMusicListProps) {
     const {
@@ -139,10 +145,31 @@ export default function MusicList(props: IMusicListProps) {
      * 往前挪「半屏的行数」，让目标行落在中间（误差不超过半行）。
      */
     const jumpKeyRef = useRef(0);
-    const [jumpState, setJumpState] = useState<{
-        index: number;
-        key: number;
-    }>({ index: -1, key: 0 });
+
+    /**
+     * 双缓冲渲染：a / b 两个槽位，同一时刻只有一个可见。
+     *
+     * 为什么不是「一个列表换 key 重挂载」：FlashList 挂载后的第一个渲染周期**不绘制 cell**
+     * （官方 onLoad 注释原话："FlashList doesn't render items in the first cycle"），
+     * 而 initialScrollIndex 的实现是「先把渲染窗口摆到第 N 项，再把 ScrollView 滚过去」，
+     * 中间那一帧视口停在内容顶部 —— 用户看到的就是「点定位 → 画面空白一下 → 才定位到歌曲」。
+     *
+     * 所以跳转改成：新列表在**另一个槽位隐藏挂载**（屏幕上看不见），等它首帧画好
+     * （onLoad + 两帧）再把可见槽位切过去、同时卸载旧槽位。旧列表全程原地不动，
+     * 因此不会被 React 重建、也不会自己空白一次。
+     */
+    const [slotA, setSlotA] = useState<IListInstance | null>({
+        index: -1,
+        key: 0,
+    });
+    const [slotB, setSlotB] = useState<IListInstance | null>(null);
+    /** 当前可见的槽位 */
+    const [visibleSlot, setVisibleSlot] = useState<"a" | "b">("a");
+    /** 正在等首帧的槽位（null = 没有跳转在进行） */
+    const [pendingSlot, setPendingSlot] = useState<"a" | "b" | null>(null);
+    /** 上面四个 state 的镜像：setState 是异步的，回调里要读最新值 */
+    const slotsRef = useRef({ slotA, slotB, visibleSlot, pendingSlot });
+    slotsRef.current = { slotA, slotB, visibleSlot, pendingSlot };
 
     /**
      * 行高实测值。
@@ -179,9 +206,84 @@ export default function MusicList(props: IMusicListProps) {
         // 重挂载后 onScroll 要等首帧回调，先把偏移估一个值，
         // 避免「切歌跟随」的可视判断拿到旧偏移再跳一次
         scrollOffsetRef.current = start * rowHeight;
-        jumpKeyRef.current += 1;
-        setJumpState({ index: scrollIndex, key: jumpKeyRef.current });
+        const next: IListInstance = {
+            index: scrollIndex,
+            key: jumpKeyRef.current + 1,
+        };
+        jumpKeyRef.current = next.key;
+        // 新列表挂到「当前不可见」的那个槽位；已有一个在等首帧时直接替换它
+        // （它本来就藏着，换 key 重挂也看不见）
+        const st = slotsRef.current;
+        const target: "a" | "b" = st.pendingSlot
+            ? st.pendingSlot
+            : st.visibleSlot === "a"
+            ? "b"
+            : "a";
+        if (target === "a") {
+            setSlotA(next);
+        } else {
+            setSlotB(next);
+        }
+        setPendingSlot(target);
     }, []);
+
+    /**
+     * 把可见槽位切到 slot，并卸载另一个槽位。
+     * 旧列表要等新列表「画好内容」才撤，否则那一帧空白会露出来。
+     */
+    const commitSlot = useCallback((slot: "a" | "b") => {
+        // 等首帧的这几帧里可能又来了一次跳转（pending 被替换到同一槽位），
+        // 那种情况下这次 commit 已经过期，不能切
+        if (slotsRef.current.pendingSlot !== slot) {
+            return;
+        }
+        setVisibleSlot(slot);
+        setPendingSlot(null);
+        // 另一个槽位已经看不见了，留着白占一份虚拟化 cell 和内存
+        if (slot === "a") {
+            setSlotB(null);
+        } else {
+            setSlotA(null);
+        }
+    }, []);
+
+    /**
+     * 新列表首帧画好了：再等两帧让 initialScrollIndex 的滚动真正落位，
+     * 然后才切过去。否则切换的一瞬间那眼空白还在。
+     */
+    const handleSlotLoad = useCallback(
+        (slot: "a" | "b", key: number) => {
+            const st = slotsRef.current;
+            // 已经不是「等这个槽位」了（或它已被下一次跳转替换）→ 忽略
+            if (st.pendingSlot !== slot) {
+                return;
+            }
+            const inst = slot === "a" ? st.slotA : st.slotB;
+            if (!inst || inst.key !== key) {
+                return;
+            }
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    setTimeout(() => commitSlot(slot), 32);
+                });
+            });
+        },
+        [commitSlot],
+    );
+
+    // 兜底：空列表等情况下 onLoad 不会触发，不能一直等着不切
+    useEffect(() => {
+        if (!pendingSlot) {
+            return;
+        }
+        const timer = setTimeout(() => {
+            if (slotsRef.current.pendingSlot !== pendingSlot) {
+                return;
+            }
+            commitSlot(pendingSlot);
+        }, 700);
+        return () => clearTimeout(timer);
+    }, [pendingSlot, slotA?.key, slotB?.key, commitSlot]);
     
     // 滚动到高亮项（点「定位到正在播放」按钮）
     const scrollToHighlight = useCallback(() => {
@@ -300,6 +402,129 @@ export default function MusicList(props: IMusicListProps) {
         jumpToIndex(0);
     }, [scrollToTopSignal, jumpToIndex]);
 
+    /**
+     * 渲染一个列表实例。
+     *
+     * 同一时刻最多两个：可见的（active）和隐藏着的「下一个」（等它 onLoad 再切过来）。
+     * 隐藏那个不接滚动/加载更多回调，避免两边同时改共享 ref；
+     * 但必须接 onLoad —— 那正是「画好了可以切」的信号。
+     */
+    const renderFlashList = (
+        inst: IListInstance,
+        slot: "a" | "b",
+        active: boolean,
+    ) => (
+        <FlashList
+            // key 取「宽度 + 跳转序号」：
+            // 宽度变化（分屏/旋转）必须重挂，宽度为 0 时挂载会让 cell 点不动；
+            // 跳转（定位按钮 / 切歌跟随 / 回顶部）也靠换 key 重挂，
+            // 由 initialScrollIndex 在首帧摆好位置，不走滚动接口。
+            key={`w${Math.round(listSize!.width)}-j${inst.key}`}
+            ref={active ? flashListRef : undefined}
+            estimatedListSize={listSize!}
+            // 定位：交给首帧布局直接摆好，不做事后滚动
+            initialScrollIndex={
+                inst.index >= 0
+                    ? Math.min(
+                          inst.index,
+                          Math.max(0, (musicList?.length ?? 1) - 1),
+                      )
+                    : initialIndexRef.current
+            }
+            // 关闭子视图裁剪：Android 上它会在程序化滚动 / 尺寸变化后
+            // 把 cell 从原生视图树里摘掉，表现为「列表看得见但点不动，
+            // 手指滑一下才恢复」。列表本身有虚拟化，不裁剪也不会多渲染。
+            removeClippedSubviews={false}
+            // 首帧画出内容 → 可以切到这个槽位了
+            onLoad={() => handleSlotLoad(slot, inst.key)}
+            ListHeaderComponent={
+                Header ? (
+                    // 包一层只为量出头高度，滚动定位时要把它算进偏移
+                    <View
+                        onLayout={e => {
+                            headerHeightRef.current =
+                                e.nativeEvent.layout.height;
+                        }}>
+                        {Header as React.ReactNode}
+                    </View>
+                ) : null
+            }
+            ListEmptyComponent={<ListEmpty state={state} onRetry={onRetry} />}
+            ListFooterComponent={
+                musicList?.length ? <ListFooter state={state} onRetry={onRetry} /> : null
+            }
+            extraData={highlightMusicItem}
+            data={musicList ?? []}
+            estimatedItemSize={ITEM_HEIGHT}
+            // 声明每行真实高度：让内部偏移计算 / 可视判断与真实布局一致，
+            // 避免长列表里「时高 × 索引」的估算误差累积
+            overrideItemLayout={layout => {
+                layout.size = ITEM_HEIGHT;
+            }}
+            onScrollBeginDrag={active ? handleScrollBegin : undefined}
+            onScrollEndDrag={active ? handleScrollEnd : undefined}
+            onMomentumScrollEnd={active ? handleScrollEnd : undefined}
+            onScroll={
+                active
+                    ? e => {
+                          scrollOffsetRef.current =
+                              e.nativeEvent.contentOffset.y;
+                      }
+                    : undefined
+            }
+            scrollEventThrottle={32}
+            renderItem={({ index, item: musicItem }) => {
+                return (
+                    // 包一层只为量出真实行高（定位居中要用），
+                    // 普通 View 不参与触摸响应，不影响行内点击
+                    <View
+                        onLayout={e => {
+                            const h = e.nativeEvent.layout.height;
+                            if (h > 0) {
+                                rowHeightRef.current = h;
+                            }
+                        }}>
+                        <MusicItem
+                            musicItem={musicItem}
+                            index={showIndex ? index + 1 : undefined}
+                            onItemPress={() => {
+                                // 用户点的是「眼前这一行」，播放后列表不要自己滑动
+                                suppressFollowUntilRef.current =
+                                    Date.now() + 2000;
+                                if (onItemPress) {
+                                    onItemPress(musicItem, musicList);
+                                } else {
+                                    TrackPlayer.playWithReplacePlayList(
+                                        musicItem,
+                                        musicList ?? [musicItem],
+                                    );
+                                }
+                            }}
+                            musicSheet={musicSheet}
+                            highlight={isSameMediaItem(
+                                musicItem,
+                                highlightMusicItem,
+                            )}
+                        />
+                    </View>
+                );
+            }}
+            onEndReached={
+                active
+                    ? () => {
+                          if (
+                              state === RequestStateCode.IDLE ||
+                              state === RequestStateCode.PARTLY_DONE
+                          ) {
+                              onLoadMore?.();
+                          }
+                      }
+                    : undefined
+            }
+            onEndReachedThreshold={0.1}
+        />
+    );
+
     return (
         <View
             style={styles.container}
@@ -324,101 +549,32 @@ export default function MusicList(props: IMusicListProps) {
             listSize.width > 0 &&
             listSize.height > 0 &&
             !waitForInitialPosition ? (
-            <FlashList
-                // key 取「宽度 + 跳转序号」：
-                // 宽度变化（分屏/旋转）必须重挂，宽度为 0 时挂载会让 cell 点不动；
-                // 跳转（定位按钮 / 切歌跟随 / 回顶部）也靠换 key 重挂，
-                // 由 initialScrollIndex 在首帧摆好位置，不走滚动接口。
-                key={`w${Math.round(listSize.width)}-j${jumpState.key}`}
-                ref={flashListRef}
-                estimatedListSize={listSize}
-                // 定位：交给首帧布局直接摆好，不做事后滚动
-                initialScrollIndex={
-                    jumpState.index >= 0
-                        ? Math.min(
-                              jumpState.index,
-                              Math.max(0, (musicList?.length ?? 1) - 1),
-                          )
-                        : initialIndexRef.current
-                }
-                // 关闭子视图裁剪：Android 上它会在程序化滚动 / 尺寸变化后
-                // 把 cell 从原生视图树里摘掉，表现为「列表看得见但点不动，
-                // 手指滑一下才恢复」。列表本身有虚拟化，不裁剪也不会多渲染。
-                removeClippedSubviews={false}
-                ListHeaderComponent={
-                    Header ? (
-                        // 包一层只为量出头高度，滚动定位时要把它算进偏移
+                <>
+                    {/* A 槽：一直存在；跳转时新列表挂到空着的那个槽位并先隐藏，
+                        画好内容后再把可见槽位切过去，所以屏幕上不会出现空白帧 */}
+                    {slotA ? (
                         <View
-                            onLayout={e => {
-                                headerHeightRef.current =
-                                    e.nativeEvent.layout.height;
-                            }}>
-                            {Header as React.ReactNode}
+                            key="slotA"
+                            style={[
+                                styles.listLayer,
+                                visibleSlot !== "a" && styles.listHidden,
+                            ]}
+                            pointerEvents={visibleSlot === "a" ? "auto" : "none"}>
+                            {renderFlashList(slotA, "a", visibleSlot === "a")}
                         </View>
-                    ) : null
-                }
-                ListEmptyComponent={<ListEmpty state={state} onRetry={onRetry} />}
-                ListFooterComponent={
-                    musicList?.length ? <ListFooter state={state} onRetry={onRetry} /> : null
-                }
-                extraData={highlightMusicItem}
-                data={musicList ?? []}
-                estimatedItemSize={ITEM_HEIGHT}
-                // 声明每行真实高度：让内部偏移计算 / 可视判断与真实布局一致，
-                // 避免长列表里「时高 × 索引」的估算误差累积
-                overrideItemLayout={layout => {
-                    layout.size = ITEM_HEIGHT;
-                }}
-                onScrollBeginDrag={handleScrollBegin}
-                onScrollEndDrag={handleScrollEnd}
-                onMomentumScrollEnd={handleScrollEnd}
-                onScroll={e => {
-                    scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
-                }}
-                scrollEventThrottle={32}
-                renderItem={({ index, item: musicItem }) => {
-                    return (
-                        // 包一层只为量出真实行高（定位居中要用），
-                        // 普通 View 不参与触摸响应，不影响行内点击
+                    ) : null}
+                    {slotB ? (
                         <View
-                            onLayout={e => {
-                                const h = e.nativeEvent.layout.height;
-                                if (h > 0) {
-                                    rowHeightRef.current = h;
-                                }
-                            }}>
-                            <MusicItem
-                                musicItem={musicItem}
-                                index={showIndex ? index + 1 : undefined}
-                                onItemPress={() => {
-                                    // 用户点的是「眼前这一行」，播放后列表不要自己滑动
-                                    suppressFollowUntilRef.current =
-                                        Date.now() + 2000;
-                                    if (onItemPress) {
-                                        onItemPress(musicItem, musicList);
-                                    } else {
-                                        TrackPlayer.playWithReplacePlayList(
-                                            musicItem,
-                                            musicList ?? [musicItem],
-                                        );
-                                    }
-                                }}
-                                musicSheet={musicSheet}
-                                highlight={isSameMediaItem(
-                                    musicItem,
-                                    highlightMusicItem,
-                                )}
-                            />
+                            key="slotB"
+                            style={[
+                                styles.listLayer,
+                                visibleSlot !== "b" && styles.listHidden,
+                            ]}
+                            pointerEvents={visibleSlot === "b" ? "auto" : "none"}>
+                            {renderFlashList(slotB, "b", visibleSlot === "b")}
                         </View>
-                    );
-                }}
-                onEndReached={() => {
-                    if (state === RequestStateCode.IDLE || state === RequestStateCode.PARTLY_DONE) {
-                        onLoadMore?.();
-                    }
-                }}
-                onEndReachedThreshold={0.1}
-            />
+                    ) : null}
+                </>
             ) : null}
             {showBadge && (
                 <View style={styles.badge} pointerEvents="box-none">
@@ -441,6 +597,14 @@ export default function MusicList(props: IMusicListProps) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+    },
+    /** 两个槽位叠在同一块区域上，只靠 opacity 切换可见性 */
+    listLayer: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    /** 新列表内容画出来之前先藏住，由旧列表顶住画面 */
+    listHidden: {
+        opacity: 0,
     },
     badge: {
         position: "absolute",
