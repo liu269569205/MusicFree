@@ -4,11 +4,35 @@ import rpx from "@/utils/rpx";
 import { FlashList } from "@shopify/flash-list";
 import React, { useRef, useCallback, useState, useEffect, useMemo } from "react";
 import {
+    ActivityIndicator,
     FlatListProps,
     Pressable,
     StyleSheet,
     View,
 } from "react-native";
+import { appendFile, ExternalDirectoryPath } from "react-native-fs";
+
+/**
+ * 定位耗时探针：把「点击 → 新列表首帧 → 切换完成」的耗时写到
+ * `Android/data/fun.upup.musicfree/files/jump_probe.log`。
+ * release 包的 console.log 不进 logcat，只能落盘 + `adb shell cat` 读回来。
+ * 平时关掉（零开销）；怀疑定位慢/跳转异常时改成 true 再编一版即可。
+ *
+ * 实测（528 首歌单，从第 1 行跳到第 340 行）：
+ * - 小米15  Android 16：onLoad +154ms，commit +163ms
+ * - 小米10 Pro Android 14：onLoad +306ms，commit +313ms
+ * 也就是说耗时几乎全在「新列表挂载 + 首个 cell 布局」，切换本身只占几毫秒。
+ */
+const JUMP_PROBE = false;
+const JUMP_PROBE_FILE = `${ExternalDirectoryPath}/jump_probe.log`;
+function jumpProbe(msg: string) {
+    if (!JUMP_PROBE) {
+        return;
+    }
+    appendFile(JUMP_PROBE_FILE, `${Date.now()} ${msg}\n`, "utf8").catch(
+        () => {},
+    );
+}
 import ListEmpty from "../base/listEmpty";
 import ListFooter from "../base/listFooter";
 import MusicItem from "../mediaItem/musicItem";
@@ -145,6 +169,8 @@ export default function MusicList(props: IMusicListProps) {
      * 往前挪「半屏的行数」，让目标行落在中间（误差不超过半行）。
      */
     const jumpKeyRef = useRef(0);
+    /** 最近一次跳转的时间戳（探针用） */
+    const jumpAtRef = useRef(0);
 
     /**
      * 双缓冲渲染：a / b 两个槽位，同一时刻只有一个可见。
@@ -211,6 +237,8 @@ export default function MusicList(props: IMusicListProps) {
             key: jumpKeyRef.current + 1,
         };
         jumpKeyRef.current = next.key;
+        jumpAtRef.current = Date.now();
+        jumpProbe(`A jump idx=${scrollIndex}`);
         // 新列表挂到「当前不可见」的那个槽位；已有一个在等首帧时直接替换它
         // （它本来就藏着，换 key 重挂也看不见）
         const st = slotsRef.current;
@@ -237,19 +265,36 @@ export default function MusicList(props: IMusicListProps) {
         if (slotsRef.current.pendingSlot !== slot) {
             return;
         }
+        jumpProbe(`C commit +${Date.now() - jumpAtRef.current} slot=${slot}`);
         setVisibleSlot(slot);
         setPendingSlot(null);
-        // 另一个槽位已经看不见了，留着白占一份虚拟化 cell 和内存
-        if (slot === "a") {
-            setSlotB(null);
-        } else {
-            setSlotA(null);
-        }
+        // 另一个槽位已经看不见了，留着一份虚拟化 cell 只是白占内存，
+        // 但**不能和切可见放在同一帧**：销毁一整个原生列表会抢在切换帧之前
+        // 执行，让「列表出现」晚一帧甚至几帧。推迟到下一帧再拆。
+        const other: "a" | "b" = slot === "a" ? "b" : "a";
+        const otherKey = (other === "a" ? slotsRef.current.slotA : slotsRef.current.slotB)?.key;
+        requestAnimationFrame(() => {
+            const st = slotsRef.current;
+            // 这一帧里可能又发生了一次跳转、刚把新列表挂到 other 上，别误伤
+            if (st.pendingSlot === other) {
+                return;
+            }
+            const cur = other === "a" ? st.slotA : st.slotB;
+            if (!cur || (otherKey !== undefined && cur.key !== otherKey)) {
+                return;
+            }
+            if (other === "a") {
+                setSlotA(null);
+            } else {
+                setSlotB(null);
+            }
+        });
     }, []);
 
     /**
-     * 新列表首帧画好了：再等两帧让 initialScrollIndex 的滚动真正落位，
-     * 然后才切过去。否则切换的一瞬间那眼空白还在。
+     * 新列表首帧画好了（onLoad 由首个子项布局触发，此时内容已经在屏幕上）。
+     * 只等一帧让 initialScrollIndex 的偏移落位，不再叠 32ms 延时 ——
+     * 之前那两帧 + 32ms 是纯感知延迟，实测内容在 onLoad 时就已就位。
      */
     const handleSlotLoad = useCallback(
         (slot: "a" | "b", key: number) => {
@@ -262,11 +307,8 @@ export default function MusicList(props: IMusicListProps) {
             if (!inst || inst.key !== key) {
                 return;
             }
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    setTimeout(() => commitSlot(slot), 32);
-                });
-            });
+            jumpProbe(`B onLoad +${Date.now() - jumpAtRef.current}`);
+            requestAnimationFrame(() => commitSlot(slot));
         },
         [commitSlot],
     );
@@ -280,6 +322,7 @@ export default function MusicList(props: IMusicListProps) {
             if (slotsRef.current.pendingSlot !== pendingSlot) {
                 return;
             }
+            jumpProbe(`F fallback +${Date.now() - jumpAtRef.current}`);
             commitSlot(pendingSlot);
         }, 700);
         return () => clearTimeout(timer);
@@ -576,17 +619,24 @@ export default function MusicList(props: IMusicListProps) {
                     ) : null}
                 </>
             ) : null}
-            {showBadge && (
+            {(showBadge || pendingSlot !== null) && (
                 <View style={styles.badge} pointerEvents="box-none">
                     <Pressable
                         style={[styles.badgeButton, { backgroundColor: colors.notification }]}
                         onPress={scrollToHighlight}
+                        disabled={pendingSlot !== null}
                     >
-                        <Icon
-                            name="crosshair"
-                            size={iconSizeConst.normal}
-                            color={colors.text}
-                        />
+                        {/* 跳转要等新列表画好才切，这段时间给个转圈，
+                            否则按下去到画面变化之间完全没反馈，像卡住了 */}
+                        {pendingSlot !== null ? (
+                            <ActivityIndicator size="small" color={colors.text} />
+                        ) : (
+                            <Icon
+                                name="crosshair"
+                                size={iconSizeConst.normal}
+                                color={colors.text}
+                            />
+                        )}
                     </Pressable>
                 </View>
             )}
