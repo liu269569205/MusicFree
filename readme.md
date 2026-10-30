@@ -112,17 +112,11 @@
 
 关键文件：`src/core/songBackup.ts`、`src/pages/setting/settingTypes/songBackupSetting.tsx`、`src/components/dialogs/components/songBackupProgressDialog.tsx`
 
-### 8. 默认内置订阅源
-
-首次启动自动安装预置订阅源（`app.yuanliDefaultSeeded` 守卫，只执行一次），免去手动粘贴订阅地址。
-
-实现位置：`src/entry/bootstrap/bootstrap.ts` 的 `extraMakeup()`
-
-### 9. 播放时自动下载
+### 8. 播放时自动下载
 
 播放非本地文件时自动把音源缓存到下载目录，下次播放直接走本地。
 
-### 10. 界面细节
+### 9. 界面细节
 
 - **歌曲行更紧凑**：行高 `rpx(120)` → `rpx(104)`，标题副标题间距 `rpx(16)` → `rpx(10)`，横屏一屏从 5 行变 6 行。
 - **修复面板内列表无法手指滚动**：原 `PanelBase` 默认走 `KeyboardAvoidingView` 的 `position` 模式，它渲染的外层容器**高度为 0**，面板靠绝对定位向上溢出——这种结构下面板内 `FlatList` 的原生滚动手势完全失效（能画、能点、代码能滚，唯独手指拖不动）。改为单层绝对定位全屏容器 + `pointerEvents="box-none"`，滚动恢复正常，点面板外空白仍可关闭。
@@ -249,7 +243,6 @@ adb reverse tcp:8081 tcp:8081
 | 下载文件管理 | 无 | 数字角标 + 面板（试听/删除/指定） |
 | 同名文件指定 | 无 | MMKV 持久化指定 |
 | WebDAV 歌曲备份 | 无 | 双向增量 + 实时速度 + 可取消 |
-| 默认订阅源 | 需手动添加 | 首次启动自动安装 |
 | 歌曲行高 | `rpx(120)` | `rpx(104)` |
 | 面板内列表滚动 | 部分面板失效 | 已修复 |
 
